@@ -2,6 +2,7 @@ package goftp
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -149,6 +150,60 @@ func (ftp *Ftp) CreateDirectory(directory string) error {
 	}
 
 	// great!
+	return nil
+}
+
+// Upload a buffer content to the remote server.
+// Make shure, that the correct directory is already open!
+// You can use OpenDirectory to change in the directory you want to use.
+func (ftp *Ftp) UploadFromBuffer(buf *bytes.Buffer, remoteFilePath string) error {
+	// get a data connection
+	dataConnPassive, dataConnActive, err := ftp.openDataConnection()
+	if err != nil {
+		return err
+	}
+	if dataConnActive != nil {
+		defer dataConnActive.Close()
+	}
+	if dataConnPassive != nil {
+		defer dataConnPassive.Close()
+	}
+
+	// send store request
+	_, _, err = ftp.writeCommand("STOR "+remoteFilePath, []FtpStatus{FtpStatusFileOK})
+	if err != nil {
+		return err
+	}
+
+	var dataConn net.Conn
+	if dataConnPassive != nil {
+		dataConn = dataConnPassive
+	} else {
+		// wait for active data connection
+		dataConn, err = dataConnActive.Accept()
+		if err != nil {
+			return err
+		}
+	}
+
+	// send data to remote server
+	_, err = io.Copy(dataConn, buf)
+	if err != nil {
+		return err
+	}
+	if dataConnActive != nil {
+		dataConn.Close()
+		dataConnActive.Close()
+	}
+	if dataConnPassive != nil {
+		dataConnPassive.Close()
+	}
+	// check master connection status
+	_, _, err = ftp.readCommand([]FtpStatus{FtpStatusClosingDataConnection})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
